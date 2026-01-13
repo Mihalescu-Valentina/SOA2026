@@ -3,7 +3,7 @@
 * **Project:** MicroStore (Distributed E-Commerce System)
 * **Focus:** Message Brokers, Event-Driven Architecture, and Decoupling
 
-## 1. Introduction to RabbitMQ
+## Introduction to RabbitMQ
 
 In a monolithic application, components talk to each other directly (like function calls). In a distributed system, services must communicate efficiently without blocking the user. A common pitfall is **Tight Coupling**, where Service A waits for Service B to finish before responding to the user.
 
@@ -23,7 +23,7 @@ In this tutorial, I will show how I solved this problem via RabbitMQ using the "
 
 ---
 
-## 2. Applied Architecture: The "Buy Item" Flow
+## Applied Architecture: The "Buy Item" Flow
 
 In **MicroStore**, we use RabbitMQ to handle the critical "Purchase" workflow.
 
@@ -50,7 +50,7 @@ We use an asynchronous event loop and the **Publisher/Subscriber** pattern:
 
 ---
 
-## 3. Infrastructure Setup
+## Infrastructure Setup
 
 We define RabbitMQ as a service in our `docker-compose.yml`.
 
@@ -69,7 +69,7 @@ services:
 
 ---
 
-## 4. Implementation Step 1: The Listing Service (Producer)
+## Implementation Step 1: The Listing Service (Producer)
 
 The Listing Service initiates the process. First, we register the RabbitMQ client in the module.
 
@@ -141,7 +141,7 @@ export class ListingsService {
 
 ---
 
-## 5. Implementation Step 2: The Transaction Service (Consumer)
+## Implementation Step 2: The Transaction Service (Consumer)
 
 The Transaction Service acts as a worker. It needs to listen to the queue.
 
@@ -231,7 +231,7 @@ export class AppService {
 
 ---
 
-## 6. Implementation Step 3: Closing the Loop
+## Implementation Step 3: Closing the Loop
 
 Back in the **Listing Service**, we listen for the confirmation (`item_sold`) to finalize the state.
 
@@ -262,10 +262,27 @@ export class ListingsController {
 
 ---
 
-## 7. Summary of Results
+## Summary of Results
 
 By implementing RabbitMQ, the MicroStore project achieved:
 
 1. **Fault Tolerance:** If the `transaction-service` crashes, the "buy" requests remain in the queue and are processed automatically when the service restarts.
 2. **Scalability:** We can spin up multiple instances of `transaction-service` to process the RabbitMQ queue faster without changing the frontend code.
 3. **Responsiveness:** The user interface remains usable because it doesn't block while waiting for the AWS Lambda fee calculation.
+
+## Verification & Logs
+
+To confirm the architecture is working, we can inspect the logs of our containers.
+
+### 1. RabbitMQ Connection
+
+In the picture below we can see a screenshot of the logs from the RabbitMQ container
+![rabbitmq-console-log](https://github.com/user-attachments/assets/e5ddc4f9-8752-4fa5-b369-9a91367bc33a)
+
+### 2. Transaction Processing
+
+When a user clicks "Buy", we can see the Transaction Service receiving the event and calculating the fee.
+
+*Figure 2: Transaction Service logs showing the received event and AWS Lambda fee calculation.*
+
+
