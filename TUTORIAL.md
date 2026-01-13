@@ -1,11 +1,7 @@
----
-
 # Tutorial: Asynchronous Microservices with RabbitMQ in NestJS
 
 * **Project:** MicroStore (Distributed E-Commerce System)
 * **Focus:** Message Brokers, Event-Driven Architecture, and Decoupling
-
----
 
 ## 1. Introduction to RabbitMQ
 
