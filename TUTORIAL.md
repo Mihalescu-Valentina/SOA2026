@@ -282,7 +282,7 @@ In the picture below we can see a screenshot of the logs from the RabbitMQ conta
 ### 2. Transaction Processing
 
 When a user clicks "Buy", we can see the Transaction Service receiving the event and calculating the fee.
+![transaction-service-console-log](https://github.com/user-attachments/assets/907fd8a6-56fe-42d8-a465-dda39713085c)
 
-*Figure 2: Transaction Service logs showing the received event and AWS Lambda fee calculation.*
 
 
