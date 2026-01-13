@@ -9,9 +9,9 @@
 
 ## 1. Introduction to RabbitMQ
 
-In a monolithic application, components talk to each other directly (like function calls).
-In a distributed system, services must communicate efficiently without blocking the user. A common pitfall is Tight Coupling, where Service A waits for Service B to finish before responding to the user.
-In this tutorial I will show how I solved this problem via RabbitMQ using the buy item functionality as example. 
+In a monolithic application, components talk to each other directly (like function calls). In a distributed system, services must communicate efficiently without blocking the user. A common pitfall is **Tight Coupling**, where Service A waits for Service B to finish before responding to the user.
+
+In this tutorial, I will show how I solved this problem via RabbitMQ using the "Buy Item" functionality as an example.
 
 **RabbitMQ** is a **Message Broker**. We can say it's similar to a **Digital Post Office**:
 
@@ -42,25 +42,19 @@ If we did this synchronously (HTTP), the user would have to wait for the Databas
 
 ### The Solution (Event Loop)
 
-We use an asynchronous event loop:
+We use an asynchronous event loop and the **Publisher/Subscriber** pattern:
 
-1. **Listing Service** (Producer) -> Emits `order_created`.
-2. **Transaction Service** (Consumer) -> Picks up `order_created`, calculates fees, saves to DB.
-3. **Transaction Service** (Producer) -> Emits `item_sold` confirmation.
-4. **Listing Service** (Consumer) -> Listens for `item_sold` to update its local database state.
-The Listing Service emits an event (order_created) to signify a purchase. RabbitMQ routes this message to the transactions queue, where the Transaction Service processes it.
-An aws faas calculates the fees and saves the transaction new data to the db. T
+1. **User** clicks "Buy".
+2. **Listing Service** (Producer) marks the item `isSold = true` locally.
+3. **Listing Service** emits `order_created` to RabbitMQ.
+4. **Listing Service** returns "Purchase Successful" to the user **instantly**.
+5. **Transaction Service** (Consumer) picks up `order_created`, calls AWS Lambda for fees, and saves the transaction.
+6. **Transaction Service** (Producer) emits `item_sold` confirmation back to the Listing Service.
+7. **Listing Service** (Consumer) receives the confirmation and ensures data consistency.
 
-### System Architecture
-# We utilize the Publisher/Subscriber pattern to decouple our services.
-1. User clicks "Buy".
-2. Listing Service marks item isSold = true and emits order_created to RabbitMQ.
-3. Listing Service returns "Purchase Successful" to the user instantly.
-4. Transaction Service receives order_created, calls AWS Lambda, and saves the transaction.
-5. Transaction Service emits item_sold confirmation back to Listing Service.
-6. Listing Service receives confirmation and ensures data consistency.
+---
 
-## Infrastructure Setup
+## 3. Infrastructure Setup
 
 We define RabbitMQ as a service in our `docker-compose.yml`.
 
@@ -70,14 +64,16 @@ services:
     image: rabbitmq:3-management
     container_name: rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "5672:5672"   # AMQP Protocol
+      - "15672:15672" # Management UI
     networks:
       - microstore-network
 
 ```
+
 ---
-## Implementation Step 1: The Listing Service (Producer)
+
+## 4. Implementation Step 1: The Listing Service (Producer)
 
 The Listing Service initiates the process. First, we register the RabbitMQ client in the module.
 
@@ -108,20 +104,30 @@ export class ListingsModule {}
 ```
 
 **File:** `src/listings.service.ts`
-Here we inject the client and emit the event.
+
+Here we inject the client, emit the event, and return an immediate success message (Optimistic UI).
 
 ```typescript
 @Injectable()
 export class ListingsService {
   constructor(
     @Inject('TRANSACTION_SERVICE') private client: ClientProxy,
-    // ... repositories
+    @InjectRepository(Listing) private listingRepository: Repository<Listing>,
+    private listingsGateway: ListingsGateway,
   ) {}
 
   async buyItem(listingId: number, buyerId: number) {
-    // 1. Validation Logic...
+    const listing = await this.findOne(listingId);
+
+    // 1. Validation Logic
+    if (listing.isSold) throw new BadRequestException('Already sold');
     
-    // 2. Emit the Event
+    // 2. Optimistic Update (Instant)
+    listing.isSold = true;
+    await this.listingRepository.save(listing);
+    this.listingsGateway.notifyItemSold(listingId); // Notify Frontend via Socket
+
+    // 3. Emit the Event (Async)
     // We send the payload to the 'transactions_queue'
     this.client.emit('order_created', {
       listingId: listingId,
@@ -131,7 +137,7 @@ export class ListingsService {
       createdAt: new Date(),
     });
 
-    return { message: 'Purchase processing started' };
+    return { message: 'Purchase successful', listing };
   }
 }
 
@@ -139,11 +145,12 @@ export class ListingsService {
 
 ---
 
-## Implementation Step 2: The Transaction Service (Consumer)
+## 5. Implementation Step 2: The Transaction Service (Consumer)
 
 The Transaction Service acts as a worker. It needs to listen to the queue.
 
 **File:** `src/main.ts`
+
 We convert the app to a Hybrid Microservice to enable listeners.
 
 ```typescript
@@ -161,13 +168,14 @@ async function bootstrap() {
   });
 
   await app.startAllMicroservices();
-  await app.listen(3000);
+  await app.listen(3002);
 }
 bootstrap();
 
 ```
 
 **File:** `src/app.controller.ts`
+
 The controller uses `@EventPattern` to react to messages.
 
 ```typescript
@@ -185,6 +193,7 @@ export class AppController {
 ```
 
 **File:** `src/app.service.ts`
+
 The service processes the logic (including the FaaS call) and then emits a reply event.
 
 ```typescript
@@ -199,20 +208,25 @@ export class AppService {
     console.log('📦 RabbitMQ Event Received:', data);
 
     // 1. Call External AWS Lambda for Fee Calculation (Synchronous HTTP)
-    const awsResponse = await axios.post(
-       "https://your-lambda-url.on.aws/", 
-       { price: data.price }
-    );
-    const finalPrice = awsResponse.data.total;
+    let finalPrice = data.price;
+    try {
+        const awsResponse = await axios.post(
+           "https://your-lambda-url.on.aws/", 
+           { price: data.price }
+        );
+        finalPrice = awsResponse.data.total;
+    } catch (e) {
+        console.error("AWS Lambda failed, using default price");
+    }
 
     // 2. Save Transaction
     const transaction = this.repo.create({ ...data, price: finalPrice });
-    await this.repo.save(transaction);
+    const saved = await this.repo.save(transaction);
 
     // 3. 📢 REPLY: Tell Listing Service the item is officially sold
     this.client.emit('item_sold', { 
        listingId: data.listingId, 
-       transactionId: transaction.id 
+       transactionId: saved.id 
     });
   }
 }
@@ -223,7 +237,7 @@ export class AppService {
 
 ## 6. Implementation Step 3: Closing the Loop
 
-Back in the **Listing Service**, we need to listen for the confirmation (`item_sold`) to finalize the state.
+Back in the **Listing Service**, we listen for the confirmation (`item_sold`) to finalize the state.
 
 **File:** `src/listings.controller.ts`
 
@@ -235,17 +249,15 @@ export class ListingsController {
     private readonly gateway: ListingsGateway 
   ) {}
 
-  // ... standard HTTP endpoints
-
   // 👇 Listener for the Reply
   @EventPattern('item_sold') 
   async handleItemSold(@Payload() data: any) {
     console.log('🐰 Confirmation Received: item_sold', data);
     
-    // 1. Update Database (Persistence)
+    // 1. Update Database (Persistence check)
     await this.listingsService.update(data.listingId, { isSold: true });
 
-    // 2. Update Frontend (Real-time)
+    // 2. Update Frontend (Redundant safety for WebSockets)
     this.gateway.notifyItemSold(data.listingId);
   }
 }
