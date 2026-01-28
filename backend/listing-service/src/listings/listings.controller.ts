@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete,UseGuards,Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
 import { ListingsService } from './listings.service';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
@@ -6,15 +6,15 @@ import { AuthGuard } from '@nestjs/passport/dist/auth.guard';
 
 @Controller('listings')
 export class ListingsController {
-  constructor(private readonly listingsService: ListingsService) {}
+  constructor(private readonly listingsService: ListingsService) { }
 
   @Post()
   @UseGuards(AuthGuard('jwt'))
   create(@Body() createListingDto: CreateListingDto, @Req() req) {
 
     console.log('User from Token:', req.user);
-    createListingDto.sellerId = req.user.userId; 
-    
+    createListingDto.sellerId = req.user.userId;
+
     return this.listingsService.create(createListingDto);
   }
 
@@ -28,16 +28,18 @@ export class ListingsController {
     return this.listingsService.findOne(+id);
   }
 
+  // UPDATED: Pass userId to service
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'))
-  update(@Param('id') id: string, @Body() updateListingDto: UpdateListingDto) {
-    return this.listingsService.update(+id, updateListingDto);
+  update(@Param('id') id: string, @Body() updateListingDto: UpdateListingDto, @Req() req) {
+    return this.listingsService.update(+id, updateListingDto, req.user.userId);
   }
 
+  // UPDATED: Pass userId to service
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
-  remove(@Param('id') id: string) {
-    return this.listingsService.remove(+id);
+  remove(@Param('id') id: string, @Req() req) {
+    return this.listingsService.remove(+id, req.user.userId);
   }
 
   @Post(':id/buy')
