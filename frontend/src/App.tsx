@@ -9,6 +9,8 @@ import { Register } from './Register';
 import { CreateListing } from './CreateListing';
 
 import { MyTransactions } from './MyTransactions';
+import { io } from 'socket.io-client';
+import { ProductDetails } from './ProductDetails';
 
 
 
@@ -28,7 +30,7 @@ interface Listing {
 
 // NEW: Add 'sell' to the view states
 
-type ViewState = 'home' | 'login' | 'register' | 'sell' | 'transactions';
+type ViewState = 'home' | 'login' | 'register' | 'sell' | 'transactions' | 'details';
 
 
 
@@ -47,6 +49,14 @@ function App() {
     localStorage.getItem('userId') ? Number(localStorage.getItem('userId')) : null
 
   );
+
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+
+  // Helper to switch view
+  const openDetails = (id: number) => {
+    setSelectedItemId(id);
+    setView('details');
+  };
 
 
 
@@ -79,6 +89,37 @@ function App() {
   useEffect(() => {
 
     fetchListings();
+    // const socket = io('http://localhost:3001');
+    const socket = io('http://localhost:3001', {
+      transports: ['websocket'],
+      withCredentials: true,
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error("Socket Connection Error:", err);
+    });
+
+    // 2. Listen for "Item Sold"
+    socket.on('item_sold', (data) => {
+      console.log("Socket Event Received: item_sold", data);
+      setListings(prevListings =>
+        prevListings.map(item =>
+          item.id === data.listingId ? { ...item, isSold: true } : item
+        )
+      );
+    });
+
+    // 3. Listen for "New Item"
+    socket.on('new_item', (newItem) => {
+      console.log("Socket Event Received: new_item", newItem);
+      setMessage(`🔔 New item added: ${newItem.title}`);
+      setListings(prev => [...prev, newItem]);
+    });
+
+    // Cleanup when leaving page
+    return () => {
+      socket.disconnect();
+    }
 
   }, []);
 
@@ -324,7 +365,20 @@ function App() {
 
       )}
 
-
+      {view === 'details' && selectedItemId && (
+        <ProductDetails
+          listingId={selectedItemId}
+          currentUserId={currentUserId}
+          token={token}
+          onBack={() => setView('home')}
+          onBuy={(id) => { handleBuy(id); setView('home'); }}
+          // Refresh list and go home when update/delete happens
+          onUpdateSuccess={() => {
+            fetchListings();
+            setView('home');
+          }}
+        />
+      )}
 
       {view === 'home' && (
 
@@ -350,7 +404,12 @@ function App() {
 
               }}>
 
-                <h3 style={{ margin: '0 0 10px 0' }}>{item.title}</h3>
+                <h3
+                  style={{ margin: '0 0 10px 0', cursor: 'pointer', color: '#007bff', textDecoration: 'underline' }}
+                  onClick={() => openDetails(item.id)}
+                >
+                  {item.title}
+                </h3>
 
                 <p style={{ fontSize: '1.4em', fontWeight: 'bold', margin: '0 0 15px 0', color: '#333' }}>${item.price}</p>
 
